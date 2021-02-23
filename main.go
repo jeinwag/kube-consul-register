@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"net/http"
@@ -19,7 +20,7 @@ import (
 	"github.com/tczekajlo/kube-consul-register/metrics"
 	"github.com/tczekajlo/kube-consul-register/utils"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/pkg/api/v1"
+	v1 "k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -34,6 +35,7 @@ var (
 	watchNamespace       = flag.String("watch-namespace", v1.NamespaceAll, "namespace to watch for Pods. Default is to watch all namespaces")
 	kubeconfig           = flag.String("kubeconfig", "./kubeconfig", "absolute path to the kubeconfig file")
 	configMap            = flag.String("configmap", "default/kube-consul-register-config", "name of the ConfigMap that containes the custom configuration to use")
+	secret               = flag.String("secret", "defaut/kube-consul-register-consul-token", "name of the secret containing the consul token")
 	inClusterConfig      = flag.Bool("in-cluster", false, "use in-cluster config. Use always in case when controller is running on Kubernetes cluster")
 	syncInterval         = flag.Duration("sync-interval", 120*time.Second, "time in seconds, what period of time will be done synchronization")
 	cleanInterval        = flag.Duration("clean-interval", 1800*time.Second, "time in seconds, what period of time will be done cleaning of inactive services")
@@ -95,6 +97,24 @@ func main() {
 		glog.Infof("Current configuration: Controller: %#v, Consul: %#v", cfg.Controller, cfg.Consul)
 	}
 
+	if *secret != "" {
+		namespace, name, err := utils.ParseNsName(*secret)
+		if err != nil {
+			glog.Fatalf("Secret: %v", err)
+		}
+		secret, err := clientset.CoreV1().Secrets(namespace).Get(name)
+		if err != nil {
+			glog.Fatalf("can't get secret %s", secret)
+		}
+		if value, ok := secret.Data["consul_token"]; ok {
+			buffer := make([]byte, base64.StdEncoding.DecodedLen(len(value)))
+			l, err := base64.StdEncoding.Decode(buffer, value)
+			if err != nil {
+				glog.Fatalf("can't decode consul_token secret")
+			}
+			cfg.Controller.ConsulToken = string(value[:l])
+		}
+	}
 	//Consul instance
 	consulInstance := consul.Adapter{}
 
